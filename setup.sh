@@ -1,13 +1,46 @@
 #!/bin/bash
 set -e
 
-# Wi-Fi 연결(IP) 대기 (최대 120초)
+USER_NAME="${SUDO_USER:-$(whoami)}"
+HOME_DIR="/home/$USER_NAME"
+
 for _ in {1..120}; do
   hostname -I | grep -qE '[0-9]+\.[0-9]+\.[0-9]+' && break
   sleep 1
 done
 
-# 기본 패키지
+CURRENT_IP=$(hostname -I | awk '{print $1}')
+GATEWAY=$(ip route | awk '/default/ {print $3}')
+
+rm -f /etc/netplan/99-fixed-ip.yaml
+
+cat > /etc/netplan/99-fixed-ip.yaml << EOF
+network:
+  version: 2
+  wifis:
+    wlan0:
+      dhcp4: false
+      addresses:
+        - ${CURRENT_IP}/24
+      routes:
+        - to: default
+          via: ${GATEWAY}
+      nameservers:
+        addresses:
+          - 8.8.8.8
+          - 1.1.1.1
+EOF
+
+echo
+echo "현재 IP: ${CURRENT_IP}"
+echo "연결이 유지되면 ENTER를 누르세요"
+echo
+
+if ! netplan try; then
+  echo "고정 IP 적용 실패."
+  exit 1
+fi
+
 apt update
 apt install -y \
   ca-certificates \
@@ -17,14 +50,10 @@ apt install -y \
   iw \
   linux-firmware
 
-# 무선 국가 코드 KR
 iw reg set KR
 echo "REGDOMAIN=KR" > /etc/default/crda
-
-# Wi-Fi 절전 OFF (즉시)
 iw dev wlan0 set power_save off || true
 
-# 부팅 시에도 Wi-Fi 절전 OFF
 cat > /etc/rc.local << 'EOF'
 #!/bin/bash
 iw dev wlan0 set power_save off || true
@@ -32,21 +61,12 @@ exit 0
 EOF
 chmod +x /etc/rc.local
 
-# --------------------
-# Docker 설치 (공식)
-# --------------------
 curl -fsSL https://get.docker.com | sh
-
-# docker compose plugin
 apt install -y docker-compose-plugin
+usermod -aG docker "$USER_NAME"
 
-# 현재 유저 docker 그룹 추가
-usermod -aG docker "$SUDO_USER"
-
-# --------------------
-# Java 25 (Temurin)
-# --------------------
-curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg
+curl -fsSL https://packages.adoptium.net/artifactory/api/gpg/key/public \
+  | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg
 
 echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb jammy main" \
   > /etc/apt/sources.list.d/adoptium.list
