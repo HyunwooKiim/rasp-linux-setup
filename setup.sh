@@ -3,6 +3,8 @@ set -e
 
 USER_NAME="${SUDO_USER:-$(whoami)}"
 HOME_DIR="/home/$USER_NAME"
+SCRIPT_PATH="$(realpath "$0")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
 for _ in {1..120}; do
   hostname -I | grep -qE '[0-9]+\.[0-9]+\.[0-9]+' && break
@@ -10,7 +12,6 @@ for _ in {1..120}; do
 done
 
 if ! hostname -I | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
-  echo "❌ DHCP로 IP를 받지 못했습니다."
   exit 1
 fi
 
@@ -37,15 +38,7 @@ network:
           - 1.1.1.1
 EOF
 
-echo
-echo "현재 IP: ${CURRENT_IP}"
-echo "연결이 유지되면 ENTER를 누르세요"
-echo
-
-if ! netplan try; then
-  echo "고정 IP 적용 실패."
-  exit 1
-fi
+netplan try
 
 apt update
 apt install -y \
@@ -79,3 +72,58 @@ echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium
 
 apt update
 apt install -y temurin-25-jdk
+
+SSH_DIR="$HOME_DIR/.ssh"
+mkdir -p "$SSH_DIR"
+chmod 700 "$SSH_DIR"
+chown "$USER_NAME:$USER_NAME" "$SSH_DIR"
+
+if [ ! -f "$SSH_DIR/id_ed25519" ]; then
+  sudo -u "$USER_NAME" ssh-keygen -t ed25519 -N "" -f "$SSH_DIR/id_ed25519"
+fi
+
+cat "$SSH_DIR/id_ed25519.pub" >> "$SSH_DIR/authorized_keys"
+chmod 600 "$SSH_DIR/authorized_keys"
+chown "$USER_NAME:$USER_NAME" "$SSH_DIR/authorized_keys"
+
+cat > "$HOME_DIR/secrets.txt" << EOF
+# ===============================
+# GitHub Actions Secrets
+# ===============================
+
+# ---- Server SSH ----
+PI_HOST=${CURRENT_IP}
+PI_USER=${USER_NAME}
+
+# ---- SSH PRIVATE KEY (copy & paste into GitHub Secret: PI_SSH_KEY) ----
+# Run this command on the server:
+cat ~/.ssh/id_ed25519
+
+# ---- SSH PUBLIC KEY (reference only) ----
+$(cat "$SSH_DIR/id_ed25519.pub")
+
+# ---- Docker Registry ----
+GHCR_TOKEN=<< generate GitHub Personal Access Token >>
+
+# ---- Application (.env) ----
+MYSQL_ROOT_PASSWORD=\$\$root_is_king\$\$
+MYSQL_DATABASE=jagalchi_user
+MYSQL_USER=jagalchi
+MYSQL_PASSWORD=\$\$jagalchi_is_king\$\$
+SPRING_PROFILES_ACTIVE=prod
+TZ=Asia/Seoul
+EOF
+
+chown "$USER_NAME:$USER_NAME" "$HOME_DIR/secrets.txt"
+
+(
+  sleep 2
+  rm -f "$SCRIPT_PATH"
+) &
+
+if [[ "$SCRIPT_DIR" == *"rasp-linux-setup"* ]]; then
+  (
+    sleep 2
+    rm -rf "$SCRIPT_DIR"
+  ) &
+fi
