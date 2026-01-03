@@ -9,9 +9,15 @@ for _ in {1..120}; do
   sleep 1
 done
 
+if ! hostname -I | grep -qE '[0-9]+\.[0-9]+\.[0-9]+'; then
+  echo "❌ DHCP로 IP를 받지 못했습니다."
+  exit 1
+fi
+
 CURRENT_IP=$(hostname -I | awk '{print $1}')
 GATEWAY=$(ip route | awk '/default/ {print $3}')
 
+mv /etc/netplan/50-cloud-init.yaml /etc/netplan/50-cloud-init.yaml.bak 2>/dev/null || true
 rm -f /etc/netplan/99-fixed-ip.yaml
 
 cat > /etc/netplan/99-fixed-ip.yaml << EOF
